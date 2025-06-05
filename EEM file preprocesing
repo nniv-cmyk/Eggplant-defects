@@ -1,0 +1,66 @@
+# mask_scatter.py
+# ----------------------------------------------------------
+# Vectorised Rayleigh-scatter remover for eggplant EEM CSVs
+# ----------------------------------------------------------
+import numpy as np
+import pandas as pd
+from pathlib import Path
+from tqdm import tqdm               #   pip install tqdm
+
+# ---------- 1.  broadcast mask function -------------------
+def mask_rayleigh(eem: np.ndarray,
+                  ex:  np.ndarray,
+                  em:  np.ndarray,
+                  delta: int = 15,
+                  mode: str = "nan") -> np.ndarray:
+    """
+    Replace 1× and 2× Rayleigh scatter regions.
+
+    mode = "nan"  -> set scatter cells to NaN   (preferred for PCA / PARAFAC)
+    mode = "zero" -> set scatter cells to 0.0   (handy for imagesc)
+    """
+    ex_grid, em_grid = np.meshgrid(ex, em)
+    mask  = np.abs(ex_grid -  em_grid) <= delta      # 1× Rayleigh
+    mask |= np.abs(2*ex_grid - em_grid) <= delta     # 2× Rayleigh
+
+    cleaned = eem.copy()
+    if mode == "nan":
+        cleaned[mask] = np.nan
+    elif mode == "zero":
+        cleaned[mask] = 0.0
+    else:
+        raise ValueError("mode must be 'nan' or 'zero'")
+    return cleaned
+
+
+# ---------- 2.  I/O paths ---------------------------------
+root_dir   = Path(r"\Eggplant\2025\DEFECTS")
+input_dir  = root_dir / "2021_EEM_data" / "cleaned"
+output_nan = root_dir / "2021_EEM_data" / "scatter_masked" / "nan"
+output_zero= root_dir / "2021_EEM_data" / "scatter_masked" / "zero"
+output_nan.mkdir(parents=True, exist_ok=True)
+output_zero.mkdir(parents=True, exist_ok=True)
+
+# ---------- 3.  batch process -----------------------------
+csv_files = sorted(input_dir.glob("*.csv"))
+print(f"Masking Rayleigh scatter in {len(csv_files)} EEM files …")
+
+for f in tqdm(csv_files, unit="file"):
+    df  = pd.read_csv(f, index_col=0)
+    eem = df.values.astype(float)
+    em  = df.index.astype(float).values
+    ex  = df.columns.astype(float).values
+
+    # --- NaN version for modelling
+    eem_nan  = mask_rayleigh(eem, ex, em, delta=15, mode="nan")
+    pd.DataFrame(eem_nan, index=em, columns=ex).to_csv(
+        output_nan / f.name, float_format="%.6f")
+
+    # --- zero-filled version for plotting
+    eem_zero = np.nan_to_num(eem_nan, nan=0.0)
+    pd.DataFrame(eem_zero, index=em, columns=ex).to_csv(
+        output_zero / f.name, float_format="%.6f")
+
+print("✓ Scatter-masked files saved to:")
+print("   •", output_nan)
+print("   •", output_zero)
